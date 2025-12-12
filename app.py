@@ -24,7 +24,7 @@ UPDATE_MINUTE = 55
 # --- Helper Functions ---
 
 def vigenere_encrypt(plaintext: str, key: str) -> str:
-    """Encrypts plaintext using the Vigenere Cipher: $$C_i = (P_i + K_i) \pmod{26}$$"""
+    """Encrypts plaintext using the Vigenere Cipher."""
     key = "".join(filter(str.isalpha, key)).upper()
     if not plaintext or not key: return ""
     ciphertext = []
