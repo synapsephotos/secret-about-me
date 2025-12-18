@@ -27,15 +27,25 @@ update_history = []
 # --- Helper Functions ---
 
 def prepare_for_reverse(text: str) -> str:
-    """Rearranges punctuation to land correctly after reversing."""
+    """
+    Handles clusters of punctuation (like ..., !!!, or ?!) 
+    so they stay together and land at the end after reversing.
+    """
     if not text: return ""
-    # Swap ", " to " ," so reverse produces ", "
+
+    # 1. Handle commas first: ", " becomes " ,"
     text = text.replace(", ", " ,")
-    # Move trailing punctuation to the front
-    punctuation_marks = ('.', '?', '!')
-    if text.endswith(punctuation_marks):
-        return text[-1] + text[:-1]
-    return text
+
+    # 2. Define the punctuation characters we care about
+    chars_to_move = ".?!"
+
+    # 3. Separate the trailing punctuation from the main text
+    stripped_text = text.rstrip(chars_to_move)
+    punctuation_tail = text[len(stripped_text):] # Grabs everything we stripped
+
+    # 4. Put the tail at the front
+    # Example: "hello..." becomes "...hello"
+    return punctuation_tail + stripped_text
 
 def vigenere_encrypt(plaintext: str, key: str) -> str:
     """Encrypts plaintext using the Vigenere Cipher."""
