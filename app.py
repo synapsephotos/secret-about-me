@@ -1,66 +1,52 @@
 import os
 import random
 import requests
-import json
+import asyncio
+import threading
 from datetime import datetime
-import time
-from flask import Flask, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
 from pytz import timezone
+from flask import Flask, jsonify
+from discord.ext import commands
+from apscheduler.schedulers.asyncio import AsyncioScheduler
 
-# --- Flask Setup ---
+# --- Flask Setup (For Keep-Alive) ---
 app = Flask(__name__)
-
-# --- Configuration ---
-USER_TOKEN = os.getenv("USER_TOKEN")
-VIGENERE_KEY = os.getenv("VIGENERE_KEY")
-QUOTES_JSON_URL = "https://kirenity.ct8.pl/5.json"
-BIO_TEMPLATE_URL = "https://kirenity.ct8.pl/55.json"
-
-TARGET_TIMEZONE = 'Europe/Paris'
-UPDATE_HOUR = 5
-UPDATE_MINUTE = 55
-
-# Global variable to track recent activity
 update_history = []
 
-# --- Helper Functions ---
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "online",
+        "bot_user": "Active",
+        "recent_updates": update_history
+    }), 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
+
+# --- Logic Functions ---
 
 def prepare_for_reverse(text: str) -> str:
-    """
-    Handles clusters of punctuation (like ..., !!!, or ?!) 
-    so they stay together and land at the end after reversing.
-    """
     if not text: return ""
-
-    # 1. Handle commas first: ", " becomes " ,"
     text = text.replace(", ", " ,")
-
-    # 2. Define the punctuation characters we care about
     chars_to_move = ".?!"
-
-    # 3. Separate the trailing punctuation from the main text
     stripped_text = text.rstrip(chars_to_move)
-    punctuation_tail = text[len(stripped_text):] # Grabs everything we stripped
-
-    # 4. Put the tail at the front
-    # Example: "hello..." becomes "...hello"
+    punctuation_tail = text[len(stripped_text):]
     return punctuation_tail + stripped_text
 
 def vigenere_encrypt(plaintext: str, key: str) -> str:
-    """Encrypts plaintext using the Vigenere Cipher."""
-    if not VIGENERE_KEY: return plaintext # Fallback if env var missing
-    key = "".join(filter(str.isalpha, key)).upper()
-    if not plaintext or not key: return plaintext
-    
+    v_key = os.getenv("VIGENERE_KEY")
+    if not v_key: return plaintext
+    v_key = "".join(filter(str.isalpha, v_key)).upper()
     ciphertext = []
-    key_len, key_idx = len(key), 0
+    key_len, key_idx = len(v_key), 0
     for char in plaintext:
         if char.isalpha():
             is_lower = char.islower()
             base = ord('a') if is_lower else ord('A')
             plain_shift = ord(char.upper()) - ord('A')
-            key_shift = ord(key[key_idx % key_len]) - ord('A')
+            key_shift = ord(v_key[key_idx % key_len]) - ord('A')
             cipher_shift = (plain_shift + key_shift) % 26
             ciphertext.append(chr(cipher_shift + base))
             key_idx += 1
@@ -68,93 +54,59 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
             ciphertext.append(char)
     return "".join(ciphertext)
 
-def reverse_string(text: str) -> str:
-    return text[::-1]
+# --- Discord Self-Bot & Scheduler ---
 
-def fetch_quotes(url: str) -> list:
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"[-] Quote Fetch Error: {e}")
-        return []
+class MySelfBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", self_bot=True)
+        self.scheduler = AsyncioScheduler()
 
-def fetch_bio_template(url: str) -> str | None:
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return response.json().get("template")
-    except Exception as e:
-        print(f"[-] Template Fetch Error: {e}")
-        return None
+    async def on_ready(self):
+        print(f'--- Logged in as {self.user} ---')
+        if not self.scheduler.running:
+            self.scheduler.add_job(
+                self.daily_update_job, 
+                'cron', 
+                hour=5, 
+                minute=55, 
+                timezone=timezone('Europe/Paris')
+            )
+            self.scheduler.start()
 
-def update_discord_about_me(new_bio: str):
-    if not USER_TOKEN:
-        print("[!] No USER_TOKEN found in environment variables.")
-        return
-    url = "https://discord.com/api/v10/users/@me"
-    headers = {"Authorization": USER_TOKEN, "Content-Type": "application/json"}
-    try:
-        response = requests.patch(url, json={"bio": new_bio}, headers=headers)
-        if response.status_code == 200:
-            print("[OK] Discord Bio Updated!")
-        else:
-            print(f"[X] Discord Error: {response.status_code} - {response.text}")
-    except Exception as e:
-        print(f"[-] API Request Error: {e}")
+    async def daily_update_job(self):
+        await asyncio.sleep(random.randint(555, 3655)) # Anti-detection jitter
+        try:
+            # 1. Fetch
+            template_resp = requests.get("https://kirenity.ct8.pl/55.json", timeout=10).json()
+            template = template_resp.get("template", "{SECRET_TEXT}")
+            quotes = requests.get("https://kirenity.ct8.pl/5.json", timeout=10).json()
+            original = random.choice(quotes)
+            
+            # 2. Process
+            prepared = prepare_for_reverse(original)
+            encrypted = vigenere_encrypt(prepared, os.getenv("VIGENERE_KEY"))
+            final_text = encrypted[::-1].lower()
+            new_bio = template.format(SECRET_TEXT=final_text)
 
-def daily_update_job():
-    now = datetime.now(timezone(TARGET_TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] Starting scheduled update...")
-    
-    # 1. Fetch
-    template = fetch_bio_template(BIO_TEMPLATE_URL) or "Secret: {SECRET_TEXT}"
-    quotes = fetch_quotes(QUOTES_JSON_URL)
-    original = random.choice(quotes) if quotes else "Default message"
-    
-    # 2. Logic Flow: Prepare -> Encrypt -> Reverse
-    prepared = prepare_for_reverse(original)
-    encrypted = vigenere_encrypt(prepared, VIGENERE_KEY)
-    final_text = reverse_string(encrypted).lower()
-    
-    new_bio = template.format(SECRET_TEXT=final_text)
-    
-    # 3. Apply
-    update_discord_about_me(new_bio)
-    
-    # 4. Log to history
-    update_history.insert(0, {
-        "time": now,
-        "original": original,
-        "result": new_bio
-    })
-    if len(update_history) > 5: update_history.pop()
+            # 3. Apply
+            await self.user.edit(bio=new_bio)
+            
+            # 4. Log for Flask route
+            update_history.insert(0, {"time": datetime.now().isoformat(), "bio": new_bio})
+            if len(update_history) > 5: update_history.pop()
+            print(f"[OK] Bio updated: {new_bio}")
 
-# --- Flask Routes ---
+        except Exception as e:
+            print(f"[Error] Update failed: {e}")
 
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "online",
-        "timezone": TARGET_TIMEZONE,
-        "next_scheduled_at": f"{UPDATE_HOUR:02d}:{UPDATE_MINUTE:02d}",
-        "recent_updates": update_history
-    }), 200
-
-# --- Scheduler Initialization ---
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(
-    daily_update_job, 
-    'cron', 
-    hour=UPDATE_HOUR, 
-    minute=UPDATE_MINUTE, 
-    timezone=timezone(TARGET_TIMEZONE)
-)
-scheduler.start()
+# --- Execution ---
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    # Note: use_reloader=False prevents the scheduler from starting twice
-    app.run(host='0.0.0.0', port=port, use_reloader=False)
+    # Start Flask in a separate thread so it doesn't block the Bot
+    t = threading.Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
+    # Start the Bot
+    bot = MySelfBot()
+    bot.run(os.getenv("USER_TOKEN"))
