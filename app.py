@@ -64,7 +64,6 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
 
 class MySelfBot(commands.Bot):
     def __init__(self):
-        # Initializing with status=invisible prevents the "online flicker"
         super().__init__(
             command_prefix="!", 
             self_bot=True,
@@ -89,7 +88,7 @@ class MySelfBot(commands.Bot):
             print("[Scheduler] Active: Targeting 05:55 Europe/Paris daily.")
 
     async def daily_update_job(self):
-        # Your custom jitter: ~9 mins to 1 hour
+        # custom jitter: ~9 mins to 1 hour
         jitter = random.randint(555, 3655)
         print(f"Update triggered! Applying jitter: Waiting {jitter} seconds...")
         await asyncio.sleep(jitter)
@@ -105,7 +104,7 @@ class MySelfBot(commands.Bot):
             # 2. Cryptography Logic
             prepared = prepare_for_reverse(original)
             encrypted = vigenere_encrypt(prepared, os.getenv("VIGENERE_KEY"))
-            # Reversed and lowercased as per your original logic
+            # Reversed and lowercased
             final_text = encrypted[::-1].lower()
             new_bio = template.format(SECRET_TEXT=final_text)
 
