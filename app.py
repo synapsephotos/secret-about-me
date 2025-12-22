@@ -6,6 +6,7 @@ import threading
 from datetime import datetime
 from pytz import timezone
 from flask import Flask, jsonify
+import discord
 from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncioScheduler
 
@@ -17,11 +18,17 @@ update_history = []
 def home():
     return jsonify({
         "status": "online",
-        "bot_user": "Active",
-        "recent_updates": update_history
+        "presence": "invisible",
+        "recent_updates": update_history,
+        "config": {
+            "target_time": "05:55",
+            "timezone": "Europe/Paris",
+            "jitter_range": "555-3655s"
+        }
     }), 200
 
 def run_flask():
+    # Listens on port 5000 (standard for Flask)
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
@@ -36,17 +43,16 @@ def prepare_for_reverse(text: str) -> str:
     return punctuation_tail + stripped_text
 
 def vigenere_encrypt(plaintext: str, key: str) -> str:
-    v_key = os.getenv("VIGENERE_KEY")
-    if not v_key: return plaintext
-    v_key = "".join(filter(str.isalpha, v_key)).upper()
+    if not key: return plaintext
+    key = "".join(filter(str.isalpha, key)).upper()
     ciphertext = []
-    key_len, key_idx = len(v_key), 0
+    key_len, key_idx = len(key), 0
     for char in plaintext:
         if char.isalpha():
             is_lower = char.islower()
             base = ord('a') if is_lower else ord('A')
             plain_shift = ord(char.upper()) - ord('A')
-            key_shift = ord(v_key[key_idx % key_len]) - ord('A')
+            key_shift = ord(key[key_idx % key_len]) - ord('A')
             cipher_shift = (plain_shift + key_shift) % 26
             ciphertext.append(chr(cipher_shift + base))
             key_idx += 1
@@ -58,11 +64,19 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
 
 class MySelfBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", self_bot=True)
+        # Initializing with status=invisible prevents the "online flicker"
+        super().__init__(
+            command_prefix="!", 
+            self_bot=True,
+            status=discord.Status.invisible
+        )
         self.scheduler = AsyncioScheduler()
 
     async def on_ready(self):
         print(f'--- Logged in as {self.user} ---')
+        print(f'--- Status set to: {self.status} ---')
+        
+        # Start the scheduler inside the async loop
         if not self.scheduler.running:
             self.scheduler.add_job(
                 self.daily_update_job, 
@@ -72,29 +86,42 @@ class MySelfBot(commands.Bot):
                 timezone=timezone('Europe/Paris')
             )
             self.scheduler.start()
+            print("[Scheduler] Active: Targeting 05:55 Europe/Paris daily.")
 
     async def daily_update_job(self):
-        await asyncio.sleep(random.randint(555, 3655)) # Anti-detection jitter
+        # Your custom jitter: ~9 mins to 1 hour
+        jitter = random.randint(555, 3655)
+        print(f"Update triggered! Applying jitter: Waiting {jitter} seconds...")
+        await asyncio.sleep(jitter)
+        
         try:
-            # 1. Fetch
+            # 1. Fetching Data
             template_resp = requests.get("https://kirenity.ct8.pl/55.json", timeout=10).json()
             template = template_resp.get("template", "{SECRET_TEXT}")
-            quotes = requests.get("https://kirenity.ct8.pl/5.json", timeout=10).json()
-            original = random.choice(quotes)
             
-            # 2. Process
+            quotes = requests.get("https://kirenity.ct8.pl/5.json", timeout=10).json()
+            original = random.choice(quotes) if quotes else "Default message"
+            
+            # 2. Cryptography Logic
             prepared = prepare_for_reverse(original)
             encrypted = vigenere_encrypt(prepared, os.getenv("VIGENERE_KEY"))
+            # Reversed and lowercased as per your original logic
             final_text = encrypted[::-1].lower()
             new_bio = template.format(SECRET_TEXT=final_text)
 
-            # 3. Apply
+            # 3. Apply via discord.py-self
             await self.user.edit(bio=new_bio)
             
-            # 4. Log for Flask route
-            update_history.insert(0, {"time": datetime.now().isoformat(), "bio": new_bio})
+            # 4. Success Logging for Flask
+            now_str = datetime.now(timezone('Europe/Paris')).strftime("%Y-%m-%d %H:%M:%S")
+            update_history.insert(0, {
+                "time": now_str, 
+                "original": original, 
+                "result": new_bio,
+                "jitter_used": f"{jitter}s"
+            })
             if len(update_history) > 5: update_history.pop()
-            print(f"[OK] Bio updated: {new_bio}")
+            print(f"[{now_str}] Bio successfully updated.")
 
         except Exception as e:
             print(f"[Error] Update failed: {e}")
@@ -102,11 +129,15 @@ class MySelfBot(commands.Bot):
 # --- Execution ---
 
 if __name__ == "__main__":
-    # Start Flask in a separate thread so it doesn't block the Bot
-    t = threading.Thread(target=run_flask)
-    t.daemon = True
-    t.start()
+    # Start Flask in a background thread
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
 
-    # Start the Bot
-    bot = MySelfBot()
-    bot.run(os.getenv("USER_TOKEN"))
+    # Run the Bot
+    token = os.getenv("USER_TOKEN")
+    if token:
+        bot = MySelfBot()
+        bot.run(token)
+    else:
+        print("[Critical] No USER_TOKEN found in environment variables!")
