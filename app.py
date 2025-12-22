@@ -8,7 +8,7 @@ from pytz import timezone
 from flask import Flask, jsonify
 import discord
 from discord.ext import commands
-from apscheduler.schedulers.asyncio import AsyncioScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # --- Flask Setup (For Keep-Alive) ---
 app = Flask(__name__)
@@ -70,7 +70,7 @@ class MySelfBot(commands.Bot):
             self_bot=True,
             status=discord.Status.invisible
         )
-        self.scheduler = AsyncioScheduler()
+        self.scheduler = AsyncIOScheduler()
 
     async def on_ready(self):
         print(f'--- Logged in as {self.user} ---')
