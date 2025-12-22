@@ -4,4 +4,3 @@ apscheduler
 pytz
 gunicorn
 discord.py-self
-audioop-lpm
