@@ -1,3 +1,15 @@
+import sys
+
+# --- Python 3.13 Compatibility Fix ---
+try:
+    import audioop
+except ImportError:
+    try:
+        import audioop_lpm as audioop
+        sys.modules['audioop'] = audioop
+    except ImportError:
+        pass # If both fail, let it crash normally later
+        
 import os
 import random
 import requests
