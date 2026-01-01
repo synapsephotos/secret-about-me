@@ -67,7 +67,8 @@ class MySelfBot(commands.Bot):
         super().__init__(
             command_prefix="!", 
             self_bot=True,
-            status=discord.Status.invisible
+            status=discord.Status.invisible,
+            chunk_guilds_at_startup=False
         )
         self.scheduler = AsyncIOScheduler()
 
