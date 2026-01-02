@@ -75,6 +75,7 @@ class MySelfBot(commands.Bot):
     async def on_ready(self):
         print(f'--- Logged in as {self.user} ---')
         print(f'--- Status set to: {self.status} ---')
+        await bot.change_presence(afk=True)
         
         # Start the scheduler inside the async loop
         if not self.scheduler.running:
