@@ -7,7 +7,6 @@ from datetime import datetime
 from pytz import timezone
 from flask import Flask, jsonify
 import discord
-from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # --- Flask Setup (For Keep-Alive) ---
@@ -61,7 +60,7 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
 
 # --- Discord Self-Bot & Scheduler ---
 
-class MySelfBot(commands.Bot):
+class MySelfBot(discord.Client):
     def __init__(self):
         super().__init__(chunk_guilds_at_startup=False)
         self.scheduler = AsyncIOScheduler()
@@ -94,7 +93,7 @@ class MySelfBot(commands.Bot):
             template = template_resp.get("template", "{SECRET_TEXT}")
             
             quotes = requests.get("https://kirenity.ct8.pl/5.json", timeout=10).json()
-            original = random.choice(quotes) if quotes else "Default message"
+            original = random.choice(quotes) if quotes else "Shiny Lunala"
             
             # 2. Cryptography Logic
             prepared = prepare_for_reverse(original)
