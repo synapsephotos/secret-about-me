@@ -1,6 +1,6 @@
 import os
 import random
-import requests
+import aiohttp
 import asyncio
 import threading
 from datetime import datetime
@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# --- Flask Setup (For Keep-Alive) ---
+# --- Flask Setup ---
 app = Flask(__name__)
 update_history = []
 
@@ -20,15 +20,10 @@ def home():
         "status": "online",
         "presence": "invisible",
         "recent_updates": update_history,
-        "config": {
-            "target_time": "05:55",
-            "timezone": "Europe/Paris",
-            "jitter_range": "555-3655s"
-        }
+        "config": {"target_time": "05:55", "timezone": "Europe/Paris"}
     }), 200
 
 def run_flask():
-    # Listens on port 5000 (standard for Flask)
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
@@ -60,24 +55,19 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
             ciphertext.append(char)
     return "".join(ciphertext)
 
-# --- Discord Self-Bot & Scheduler ---
+# --- Discord Self-Bot ---
 
 class MySelfBot(commands.Bot):
     def __init__(self):
         super().__init__(
             command_prefix="!", 
             self_bot=True,
-            status=discord.Status.invisible,
-            chunk_guilds_at_startup=False
+            status=discord.Status.invisible  # Force invisible from start
         )
         self.scheduler = AsyncIOScheduler()
 
-    async def on_ready(self):
-        print(f'--- Logged in as {self.user} ---')
-        print(f'--- Status set to: {self.status} ---')
-        await bot.change_presence(afk=True)
-        
-        # Start the scheduler inside the async loop
+    async def setup_hook(self):
+        """This runs before the bot logs in."""
         if not self.scheduler.running:
             self.scheduler.add_job(
                 self.daily_update_job, 
@@ -87,42 +77,43 @@ class MySelfBot(commands.Bot):
                 timezone=timezone('Europe/Paris')
             )
             self.scheduler.start()
-            print("[Scheduler] Active: Targeting 05:55 Europe/Paris daily.")
+            print("[Scheduler] Started: Targeting 05:55 Europe/Paris daily.")
+
+    async def on_ready(self):
+        # We set AFK here just to be sure
+        await self.change_presence(status=discord.Status.invisible, afk=True)
+        print(f'--- Logged in as {self.user} (Invisible/AFK) ---')
 
     async def daily_update_job(self):
-        # custom jitter: ~9 mins to 1 hour
         jitter = random.randint(555, 3655)
-        print(f"Update triggered! Applying jitter: Waiting {jitter} seconds...")
+        print(f"Update triggered! Waiting {jitter}s jitter...")
         await asyncio.sleep(jitter)
         
         try:
-            # 1. Fetching Data
-            template_resp = requests.get("https://kirenity.ct8.pl/55.json", timeout=10).json()
-            template = template_resp.get("template", "{SECRET_TEXT}")
-            
-            quotes = requests.get("https://kirenity.ct8.pl/5.json", timeout=10).json()
-            original = random.choice(quotes) if quotes else "Default message"
-            
-            # 2. Cryptography Logic
+            async with aiohttp.ClientSession() as session:
+                # 1. Fetch Template
+                async with session.get("https://kirenity.ct8.pl/55.json") as r:
+                    template_data = await r.json()
+                    template = template_data.get("template", "{SECRET_TEXT}")
+                
+                # 2. Fetch Quotes
+                async with session.get("https://kirenity.ct8.pl/5.json") as r:
+                    quotes = await r.json()
+                    original = random.choice(quotes) if quotes else "Default message"
+
+            # 3. Processing
             prepared = prepare_for_reverse(original)
             encrypted = vigenere_encrypt(prepared, os.getenv("VIGENERE_KEY"))
-            # Reversed and lowercased
             final_text = encrypted[::-1].lower()
             new_bio = template.format(SECRET_TEXT=final_text)
 
-            # 3. Apply via discord.py-self
+            # 4. Update Profile
             await self.user.edit(bio=new_bio)
             
-            # 4. Success Logging for Flask
             now_str = datetime.now(timezone('Europe/Paris')).strftime("%Y-%m-%d %H:%M:%S")
-            update_history.insert(0, {
-                "time": now_str, 
-                "original": original, 
-                "result": new_bio,
-                "jitter_used": f"{jitter}s"
-            })
+            update_history.insert(0, {"time": now_str, "original": original, "jitter": f"{jitter}s"})
             if len(update_history) > 5: update_history.pop()
-            print(f"[{now_str}] Bio successfully updated.")
+            print(f"[{now_str}] Bio updated successfully.")
 
         except Exception as e:
             print(f"[Error] Update failed: {e}")
@@ -130,15 +121,14 @@ class MySelfBot(commands.Bot):
 # --- Execution ---
 
 if __name__ == "__main__":
-    # Start Flask in a background thread
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
+    threading.Thread(target=run_flask, daemon=True).start()
 
-    # Run the Bot
     token = os.getenv("USER_TOKEN")
     if token:
         bot = MySelfBot()
-        bot.run(token)
+        try:
+            bot.run(token)
+        except Exception as e:
+            print(f"[Critical] Bot failed to start: {e}")
     else:
-        print("[Critical] No USER_TOKEN found in environment variables!")
+        print("[Critical] No USER_TOKEN found!")
