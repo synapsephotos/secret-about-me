@@ -9,7 +9,7 @@ from flask import Flask, jsonify
 import discord
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# --- Flask Setup ---
+# --- Flask Setup (For Render Keep-Alive) ---
 app = Flask(__name__)
 update_history = []
 
@@ -18,20 +18,27 @@ def home():
     return jsonify({
         "status": "online",
         "recent_updates": update_history,
-        "config": {"target_time": "05:55", "timezone": "Europe/Paris"}
+        "config": {
+            "target_time": "05:55",
+            "timezone": "Europe/Paris",
+            "jitter_range": "555-3655s"
+        }
     }), 200
 
 def run_flask():
+    # Render uses the PORT environment variable
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# --- Logic Functions ---
+# --- Cryptography & Logic ---
+
 def prepare_for_reverse(text: str) -> str:
     if not text: return ""
     text = text.replace(", ", " ,")
     chars_to_move = ".?!\""
     stripped_text = text.rstrip(chars_to_move)
-    return text[len(stripped_text):] + stripped_text
+    punctuation_tail = text[len(stripped_text):]
+    return punctuation_tail + stripped_text
 
 def vigenere_encrypt(plaintext: str, key: str) -> str:
     if not key: return plaintext
@@ -40,69 +47,95 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
     key_len, key_idx = len(key), 0
     for char in plaintext:
         if char.isalpha():
-            base = ord('a') if char.islower() else ord('A')
+            is_lower = char.islower()
+            base = ord('a') if is_lower else ord('A')
             plain_shift = ord(char.upper()) - ord('A')
             key_shift = ord(key[key_idx % key_len]) - ord('A')
-            ciphertext.append(chr((plain_shift + key_shift) % 26 + base))
+            cipher_shift = (plain_shift + key_shift) % 26
+            ciphertext.append(chr(cipher_shift + base))
             key_idx += 1
         else:
             ciphertext.append(char)
     return "".join(ciphertext)
 
-# --- Discord Bot & Scheduler ---
+# --- Discord Bot Class ---
+
 class MySelfBot(discord.Client):
+    def __init__(self, **options):
+        super().__init__(**options)
+
     async def on_ready(self):
-        print(f'--- Logged in as {self.user} ---')
+        print(f'--- Logged in as {self.user} (ID: {self.user.id}) ---')
         await self.change_presence(afk=True)
 
-    async def daily_update_job(self):
+    async def run_daily_update(self):
+        """The actual update logic called by the scheduler."""
         jitter = random.randint(555, 3655)
-        print(f"Update triggered! Waiting {jitter}s jitter...")
+        print(f"[Scheduler] Triggered! Applying jitter: {jitter}s...")
         await asyncio.sleep(jitter)
         
         try:
+            # 1. Fetching Data
             template_resp = requests.get("https://kirenity.ct8.pl/55.json", timeout=10).json()
             template = template_resp.get("template", "{SECRET_TEXT}")
+            
             quotes = requests.get("https://kirenity.ct8.pl/5.json", timeout=10).json()
             original = random.choice(quotes) if quotes else "Shiny Lunala"
             
+            # 2. Logic
             prepared = prepare_for_reverse(original)
-            encrypted = vigenere_encrypt(prepared, os.getenv("VIGENERE_KEY"))
+            encrypted = vigenere_encrypt(prepared, os.getenv("VIGENERE_KEY", "DEFAULT"))
             final_text = encrypted[::-1].lower()
             new_bio = template.format(SECRET_TEXT=final_text)
 
+            # 3. Apply Update
             await self.user.edit(bio=new_bio)
             
+            # 4. Success Logging
             now_str = datetime.now(timezone('Europe/Paris')).strftime("%Y-%m-%d %H:%M:%S")
-            update_history.insert(0, {"time": now_str, "original": original, "result": new_bio})
-            print(f"[{now_str}] Bio updated.")
+            update_history.insert(0, {
+                "time": now_str, 
+                "original": original, 
+                "result": new_bio,
+                "jitter_used": f"{jitter}s"
+            })
+            if len(update_history) > 5: update_history.pop()
+            print(f"[{now_str}] Bio successfully updated.")
+
         except Exception as e:
             print(f"[Error] Update failed: {e}")
 
-bot = MySelfBot(chunk_guilds_at_startup=False)
+# --- Background Scheduler Bridge ---
 
-# --- The "Universal" Scheduler Fix ---
-# We use BackgroundScheduler because it runs in its own thread and doesn't depend on Discord's loop
+bot = MySelfBot(chunk_guilds_at_startup=False)
 scheduler = BackgroundScheduler(timezone=timezone('Europe/Paris'))
 
-def scheduler_bridge():
-    """Bridges the threaded scheduler to the Discord async loop."""
-    print("[Scheduler] Cron tick reached. Injecting task into Discord loop...")
-    asyncio.run_coroutine_threadsafe(bot.daily_update_job(), bot.loop)
+def scheduler_job_bridge():
+    """Bridges the threaded scheduler to the Discord async event loop."""
+    print("[Scheduler] It is 05:55! Sending task to Discord loop...")
+    if bot.is_ready():
+        asyncio.run_coroutine_threadsafe(bot.run_daily_update(), bot.loop)
+    else:
+        print("[Scheduler Error] Bot is not connected. Skipping update.")
 
-# --- Execution ---
+# --- Execution Block ---
+
 if __name__ == "__main__":
-    # 1. Start Flask
+    # 1. Start Flask in background
+    print("[System] Starting Flask keep-alive thread...")
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # 2. Start Scheduler immediately
-    scheduler.add_job(scheduler_bridge, 'cron', hour=5, minute=55)
+    # 2. Configure and Start Scheduler BEFORE bot blocks the main thread
+    print("[System] Starting Background Scheduler...")
+    scheduler.add_job(scheduler_job_bridge, 'cron', hour=5, minute=55)
     scheduler.start()
-    print("[Scheduler] Started and waiting for 05:55.")
 
-    # 3. Run Bot
+    # 3. Run the Discord Bot
     token = os.getenv("USER_TOKEN")
     if token:
-        bot.run(token)
+        try:
+            bot.run(token)
+        except Exception as e:
+            print(f"[Critical] Discord login failed: {e}")
     else:
-        print("No USER_TOKEN found!")
+        print("[Critical] No USER_TOKEN found in environment variables!")
