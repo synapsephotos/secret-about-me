@@ -1,6 +1,6 @@
 import os
 import random
-import aiohttp
+import requests
 import asyncio
 import threading
 from datetime import datetime
@@ -10,24 +10,30 @@ import discord
 from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# --- Flask Setup ---
+# --- Flask Setup (For Keep-Alive) ---
 app = Flask(__name__)
 update_history = []
 
 @app.route('/')
 def home():
-    return jsonify({"status": "running", "history": update_history}), 200
+    return jsonify({
+        "status": "online",
+        "presence": "invisible",
+        "recent_updates": update_history,
+        "config": {
+            "target_time": "05:55",
+            "timezone": "Europe/Paris",
+            "jitter_range": "555-3655s"
+        }
+    }), 200
 
 def run_flask():
-    # Adding a try-except here to see if Flask is crashing
-    try:
-        port = int(os.environ.get("PORT", 5000))
-        print(f"[Flask] Starting on port {port}")
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    except Exception as e:
-        print(f"[Flask Error] {e}")
+    # Listens on port 5000 (standard for Flask)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
 
-# --- Cryptography Logic ---
+# --- Logic Functions ---
+
 def prepare_for_reverse(text: str) -> str:
     if not text: return ""
     text = text.replace(", ", " ,")
@@ -54,23 +60,24 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
             ciphertext.append(char)
     return "".join(ciphertext)
 
-# --- Discord Self-Bot ---
+# --- Discord Self-Bot & Scheduler ---
+
 class MySelfBot(commands.Bot):
     def __init__(self):
-        # Explicitly setting intents to minimal for a self-bot
-        intents = discord.Intents.default()
         super().__init__(
             command_prefix="!", 
             self_bot=True,
             status=discord.Status.invisible,
-            intents=intents,
-            chunk_guilds_at_startup = False
+            chunk_guilds_at_startup=False
         )
         self.scheduler = AsyncIOScheduler()
 
-    async def setup_hook(self):
-        # We start the scheduler here as it's the first async entry point
-        print("DEBUG: Entering setup_hook...")
+    async def on_ready(self):
+        print(f'--- Logged in as {self.user} ---')
+        print(f'--- Status set to: {self.status} ---')
+        await bot.change_presence(afk=True)
+        
+        # Start the scheduler inside the async loop
         if not self.scheduler.running:
             self.scheduler.add_job(
                 self.daily_update_job, 
@@ -80,53 +87,58 @@ class MySelfBot(commands.Bot):
                 timezone=timezone('Europe/Paris')
             )
             self.scheduler.start()
-            print("[Scheduler] SUCCESS: Targeting 05:55 Europe/Paris daily.")
-
-    async def on_ready(self):
-        # Force invisible/afk again on connection
-        await self.change_presence(status=discord.Status.invisible, afk=True)
-        print(f'--- LOGGED IN: {self.user} ---')
+            print("[Scheduler] Active: Targeting 05:55 Europe/Paris daily.")
 
     async def daily_update_job(self):
+        # custom jitter: ~9 mins to 1 hour
         jitter = random.randint(555, 3655)
-        print(f"Update triggered. Jitter: {jitter}s")
+        print(f"Update triggered! Applying jitter: Waiting {jitter} seconds...")
         await asyncio.sleep(jitter)
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("https://kirenity.ct8.pl/55.json") as r:
-                    template = (await r.json()).get("template", "{SECRET_TEXT}")
-                async with session.get("https://kirenity.ct8.pl/5.json") as r:
-                    quotes = await r.json()
-                    original = random.choice(quotes)
+            # 1. Fetching Data
+            template_resp = requests.get("https://kirenity.ct8.pl/55.json", timeout=10).json()
+            template = template_resp.get("template", "{SECRET_TEXT}")
             
-            final_text = vigenere_encrypt(prepare_for_reverse(original), os.getenv("VIGENERE_KEY"))[::-1].lower()
+            quotes = requests.get("https://kirenity.ct8.pl/5.json", timeout=10).json()
+            original = random.choice(quotes) if quotes else "Default message"
+            
+            # 2. Cryptography Logic
+            prepared = prepare_for_reverse(original)
+            encrypted = vigenere_encrypt(prepared, os.getenv("VIGENERE_KEY"))
+            # Reversed and lowercased
+            final_text = encrypted[::-1].lower()
             new_bio = template.format(SECRET_TEXT=final_text)
 
+            # 3. Apply via discord.py-self
             await self.user.edit(bio=new_bio)
-            print(f"Bio updated at {datetime.now()}")
-            update_history.insert(0, {"time": str(datetime.now()), "bio": new_bio})
-        except Exception as e:
-            print(f"Job Error: {e}")
+            
+            # 4. Success Logging for Flask
+            now_str = datetime.now(timezone('Europe/Paris')).strftime("%Y-%m-%d %H:%M:%S")
+            update_history.insert(0, {
+                "time": now_str, 
+                "original": original, 
+                "result": new_bio,
+                "jitter_used": f"{jitter}s"
+            })
+            if len(update_history) > 5: update_history.pop()
+            print(f"[{now_str}] Bio successfully updated.")
 
-# --- Main Boot Sequence ---
+        except Exception as e:
+            print(f"[Error] Update failed: {e}")
+
+# --- Execution ---
+
 if __name__ == "__main__":
-    print("DEBUG: Script started.")
-    
-    # 1. Start Flask first
-    t = threading.Thread(target=run_flask, daemon=True)
-    t.start()
-    print("DEBUG: Flask thread spawned.")
+    # Start Flask in a background thread
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
 
-    # 2. Check Token
+    # Run the Bot
     token = os.getenv("USER_TOKEN")
-    if not token:
-        print("[CRITICAL] USER_TOKEN is missing!")
-    else:
-        # 3. Start Bot
+    if token:
         bot = MySelfBot()
-        try:
-            print("DEBUG: Attempting bot.run()...")
-            bot.run(token)
-        except Exception as e:
-            print(f"[CRITICAL] Bot crashed: {e}")
+        bot.run(token)
+    else:
+        print("[Critical] No USER_TOKEN found in environment variables!")
