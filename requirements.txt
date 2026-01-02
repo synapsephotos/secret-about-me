@@ -1,5 +1,5 @@
 flask
-requests
+aiohttp
 apscheduler
 pytz
 gunicorn
