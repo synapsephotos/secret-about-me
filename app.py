@@ -18,7 +18,6 @@ update_history = []
 def home():
     return jsonify({
         "status": "online",
-        "presence": "invisible",
         "recent_updates": update_history,
         "config": {
             "target_time": "05:55",
@@ -64,17 +63,11 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
 
 class MySelfBot(commands.Bot):
     def __init__(self):
-        super().__init__(
-            command_prefix="!", 
-            self_bot=True,
-            status=discord.Status.invisible,
-            chunk_guilds_at_startup=False
-        )
+        super().__init__(chunk_guilds_at_startup=False)
         self.scheduler = AsyncIOScheduler()
-
+        
     async def on_ready(self):
         print(f'--- Logged in as {self.user} ---')
-        print(f'--- Status set to: {self.status} ---')
         await bot.change_presence(afk=True)
         
         # Start the scheduler inside the async loop
