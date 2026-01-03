@@ -5,4 +5,3 @@ pytz
 gunicorn
 protobuf==4.25.1
 git+https://github.com/dolfies/discord.py-self.git
-aiohttp
