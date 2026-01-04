@@ -1,0 +1,30 @@
+name: Keep Repository Active
+
+on:
+  schedule:
+    # Runs every 28 days
+    - cron: '0 0 */28 * *'
+  workflow_dispatch: # Added so you can test it manually
+
+jobs:
+  create-empty-commit:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: main
+
+    - name: Configure Git
+      run: |
+        git config user.name 'github-actions[bot]'
+        git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+    - name: Create an empty commit and push
+      run: |
+        git commit --allow-empty -m "Automated empty commit to keep repo active" -m "This commit is generated automatically every few weeks to prevent GitHub Actions from being disabled due to inactivity."
+        git push origin main
