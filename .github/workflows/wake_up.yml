@@ -1,0 +1,43 @@
+name: Daily Render Wakeup (CET)
+
+on:
+  schedule:
+    # This covers 3:00 to 5:59 UTC. 
+    # In Winter (UTC+1): covers 4:00 AM to 6:59 AM Rome Time.
+    # In Summer (UTC+2): covers 5:00 AM to 7:59 AM Rome Time.
+    - cron: '*/12 3-5 * * *'
+  workflow_dispatch: # Allows you to manually trigger it for testing
+
+jobs:
+  ping-render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Rome Local Time
+        id: check_time
+        run: |
+          # Get the current hour in Rome (0-23)
+          ROME_HOUR=$(TZ="Europe/Rome" date +%H)
+          echo "Current hour in Rome is: $ROME_HOUR"
+          
+          # Only proceed if the local hour is 5 or 6 (your 5:00-6:55 window)
+          if [ "$ROME_HOUR" -eq 5 ] || [ "$ROME_HOUR" -eq 6 ]; then
+            echo "MATCH=true" >> $GITHUB_ENV
+          else
+            echo "MATCH=false" >> $GITHUB_ENV
+          fi
+          
+      - name: Knock and Wait for Boot
+        if: env.MATCH == 'true'
+        run: |
+          # --retry: Try 5 times if it gets a 5xx error (like 503)
+          # --retry-all-errors: Retry on ANY error (Connection reset, 502, 503, etc.)
+          # --retry-delay: Wait 5 seconds between tries
+          # --connect-timeout: Give Render 55s to respond to the connection
+          # --max-time: Stop the entire command after 120s (Render usually boots in <90s)
+          
+          curl -v --retry 5 \
+               --retry-all-errors \
+               --retry-delay 5 \
+               --connect-timeout 55 \
+               --max-time 180 \
+               "https://kirenity-secret-about.onrender.com"
