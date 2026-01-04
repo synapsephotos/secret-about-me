@@ -27,7 +27,7 @@ jobs:
           fi
           
       - name: Knock and Wait for Boot
-        if: env.MATCH == 'true'
+        if: env.MATCH == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           # --retry: Try 5 times if it gets a 5xx error (like 503)
           # --retry-all-errors: Retry on ANY error (Connection reset, 502, 503, etc.)
