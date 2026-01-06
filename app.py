@@ -85,6 +85,7 @@ class MySelfBot(discord.Client):
         # custom jitter: ~9 mins to 1 hour
         jitter = random.randint(555, 3655)
         print(f"Update triggered! Applying jitter: Waiting {jitter} seconds...")
+        random.seed()
         await asyncio.sleep(jitter)
         
         try:
