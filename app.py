@@ -34,7 +34,7 @@ def run_flask():
 
 def prepare_for_reverse(text: str) -> str:
     if not text: return ""
-    text = text.replace(", ", " ,")
+    text = text.replace(", ", " ,").replace("? ", " ?")
     chars_to_move = ".?!\""
     stripped_text = text.rstrip(chars_to_move)
     punctuation_tail = text[len(stripped_text):]
