@@ -81,6 +81,26 @@ class MySelfBot(discord.Client):
             self.scheduler.start()
             print("[Scheduler] Active: Targeting 05:55 Europe/Paris daily.")
 
+    async def send_webhook(self, original, final, jitter):
+        webhook_url = os.getenv("WEBHOOK_URL")
+        if not webhook_url:
+            return
+
+        embed = discord.Embed(
+            title="𓆉 kirenity secret about",
+            color=0x780000,
+            timestamp=datetime.now(timezone('Europe/Paris'))
+        )
+        embed.add_field(name="Original String", value=f"```{original}```", inline=False)
+        embed.add_field(name="Encrypted String", value=f"```{final}```", inline=False)
+        embed.set_footer(text=f"Delay used: {jitter}s")
+        
+        data = {
+            "embeds": [embed.to_dict()],
+            "username": "kirenity"
+        }
+        requests.post(webhook_url, json=data)
+
     async def daily_update_job(self):
         # custom jitter: ~9 mins to 1 hour
         jitter = random.randint(555, 3655)
@@ -105,6 +125,9 @@ class MySelfBot(discord.Client):
 
             # 3. Apply via discord.py-self
             await self.user.edit(bio=new_bio)
+            
+            # --- NEW: Webhook Notification ---
+            await self.send_webhook(original, final_text, jitter)
             
             # 4. Success Logging for Flask
             now_str = datetime.now(timezone('Europe/Paris')).strftime("%Y-%m-%d %H:%M:%S")
