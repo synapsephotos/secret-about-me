@@ -63,23 +63,11 @@ def vigenere_encrypt(plaintext: str, key: str) -> str:
 class MySelfBot(discord.Client):
     def __init__(self):
         super().__init__(chunk_guilds_at_startup=False)
-        self.scheduler = AsyncIOScheduler()
         
     async def on_ready(self):
         print(f'--- Logged in as {self.user} ---')
+        await self.customBio()
         await bot.change_presence(afk=True)
-        
-        # Start the scheduler inside the async loop
-        if not self.scheduler.running:
-            self.scheduler.add_job(
-                self.daily_update_job, 
-                'cron', 
-                hour=5, 
-                minute=55, 
-                timezone=timezone('Europe/Paris')
-            )
-            self.scheduler.start()
-            print("[Scheduler] Active: Targeting 05:55 Europe/Paris daily.")
 
     async def send_webhook(self, original, final, jitter):
         webhook_url = os.getenv("WEBHOOK_URL")
@@ -101,9 +89,8 @@ class MySelfBot(discord.Client):
         }
         requests.post(webhook_url, json=data)
 
-    async def daily_update_job(self):
-        # custom jitter: ~9 mins to 1 hour
-        jitter = random.randint(555, 3655)
+    async def customBio(self):
+        jitter = 1
         print(f"Update triggered! Applying jitter: Waiting {jitter} seconds...")
         random.seed()
         await asyncio.sleep(jitter)
