@@ -90,7 +90,7 @@ class MySelfBot(discord.Client):
         requests.post(webhook_url, json=data)
 
     async def customBio(self):
-        jitter = 1
+        jitter = random.randint(555, 3655)
         print(f"Update triggered! Applying jitter: Waiting {jitter} seconds...")
         random.seed()
         await asyncio.sleep(jitter)
